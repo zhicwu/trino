@@ -14,27 +14,32 @@
 package io.trino.plugin.deltalake.transactionlog;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
 import java.util.Map;
+import java.util.Optional;
 
+import static io.trino.plugin.deltalake.transactionlog.TransactionLogUtil.canonicalizePartitionValues;
 import static java.lang.String.format;
 
-public class CdfFileEntry
+public class CdcEntry
 {
     private final String path;
     private final Map<String, String> partitionValues;
+    private final Map<String, Optional<String>> canonicalPartitionValues;
     private final long size;
     private final boolean dataChange;
 
     @JsonCreator
-    public CdfFileEntry(
+    public CdcEntry(
             @JsonProperty("path") String path,
             @JsonProperty("partitionValues") Map<String, String> partitionValues,
             @JsonProperty("size") long size)
     {
         this.path = path;
         this.partitionValues = partitionValues;
+        this.canonicalPartitionValues = canonicalizePartitionValues(partitionValues);
         this.size = size;
         this.dataChange = false;
     }
@@ -49,6 +54,12 @@ public class CdfFileEntry
     public Map<String, String> getPartitionValues()
     {
         return partitionValues;
+    }
+
+    @JsonIgnore // derived from partitionValues
+    public Map<String, Optional<String>> getCanonicalPartitionValues()
+    {
+        return canonicalPartitionValues;
     }
 
     @JsonProperty
@@ -66,7 +77,7 @@ public class CdfFileEntry
     @Override
     public String toString()
     {
-        return format("CdfFileEntry{path=%s, partitionValues=%s, size=%d, dataChange=%b}",
+        return format("CdcEntry{path=%s, partitionValues=%s, size=%d, dataChange=%b}",
                 path, partitionValues, size, dataChange);
     }
 }

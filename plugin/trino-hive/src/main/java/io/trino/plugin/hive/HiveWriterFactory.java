@@ -88,9 +88,7 @@ import static io.trino.plugin.hive.HiveErrorCode.HIVE_PATH_ALREADY_EXISTS;
 import static io.trino.plugin.hive.HiveErrorCode.HIVE_TABLE_READ_ONLY;
 import static io.trino.plugin.hive.HiveErrorCode.HIVE_UNSUPPORTED_FORMAT;
 import static io.trino.plugin.hive.HiveSessionProperties.getInsertExistingPartitionsBehavior;
-import static io.trino.plugin.hive.HiveSessionProperties.getTemporaryStagingDirectoryPath;
 import static io.trino.plugin.hive.HiveSessionProperties.getTimestampPrecision;
-import static io.trino.plugin.hive.HiveSessionProperties.isTemporaryStagingDirectoryEnabled;
 import static io.trino.plugin.hive.HiveType.toHiveType;
 import static io.trino.plugin.hive.LocationHandle.WriteMode.DIRECT_TO_TARGET_EXISTING_DIRECTORY;
 import static io.trino.plugin.hive.acid.AcidOperation.CREATE_TABLE;
@@ -99,7 +97,6 @@ import static io.trino.plugin.hive.metastore.StorageFormat.fromHiveStorageFormat
 import static io.trino.plugin.hive.util.AcidTables.deltaSubdir;
 import static io.trino.plugin.hive.util.AcidTables.isFullAcidTable;
 import static io.trino.plugin.hive.util.AcidTables.isInsertOnlyTable;
-import static io.trino.plugin.hive.util.CompressionConfigUtil.assertCompressionConfigured;
 import static io.trino.plugin.hive.util.CompressionConfigUtil.configureCompression;
 import static io.trino.plugin.hive.util.HiveClassNames.HIVE_IGNORE_KEY_OUTPUT_FORMAT_CLASS;
 import static io.trino.plugin.hive.util.HiveUtil.getColumnNames;
@@ -199,7 +196,9 @@ public class HiveWriterFactory
             NodeManager nodeManager,
             EventClient eventClient,
             HiveSessionProperties hiveSessionProperties,
-            HiveWriterStats hiveWriterStats)
+            HiveWriterStats hiveWriterStats,
+            boolean sortedWritingTempStagingPathEnabled,
+            String sortedWritingTempStagingPath)
     {
         this.fileWriterFactories = ImmutableSet.copyOf(requireNonNull(fileWriterFactories, "fileWriterFactories is null"));
         this.fileSystem = fileSystemFactory.create(session);
@@ -221,8 +220,8 @@ public class HiveWriterFactory
         this.pageSorter = requireNonNull(pageSorter, "pageSorter is null");
         this.sortBufferSize = requireNonNull(sortBufferSize, "sortBufferSize is null");
         this.maxOpenSortFiles = maxOpenSortFiles;
-        this.sortedWritingTempStagingPathEnabled = isTemporaryStagingDirectoryEnabled(session);
-        this.sortedWritingTempStagingPath = getTemporaryStagingDirectoryPath(session);
+        this.sortedWritingTempStagingPathEnabled = sortedWritingTempStagingPathEnabled;
+        this.sortedWritingTempStagingPath = requireNonNull(sortedWritingTempStagingPath, "sortedWritingTempStagingPath is null");
         this.insertExistingPartitionsBehavior = getInsertExistingPartitionsBehavior(session);
         this.parquetTimeZone = requireNonNull(parquetTimeZone, "parquetTimeZone is null");
 
@@ -334,7 +333,7 @@ public class HiveWriterFactory
         Properties schema;
         WriteInfo writeInfo;
         StorageFormat outputStorageFormat;
-        JobConf outputConf = new JobConf(conf);
+        HiveCompressionCodec compressionCodec;
         if (partition.isEmpty()) {
             if (table == null) {
                 // Write to: a new partition in a new partitioned table,
@@ -409,12 +408,12 @@ public class HiveWriterFactory
             if (partitionName.isPresent()) {
                 // Write to a new partition
                 outputStorageFormat = fromHiveStorageFormat(partitionStorageFormat);
-                configureCompression(outputConf, selectCompressionCodec(session, partitionStorageFormat));
+                compressionCodec = selectCompressionCodec(session, partitionStorageFormat);
             }
             else {
                 // Write to a new/existing unpartitioned table
                 outputStorageFormat = fromHiveStorageFormat(tableStorageFormat);
-                configureCompression(outputConf, selectCompressionCodec(session, tableStorageFormat));
+                compressionCodec = selectCompressionCodec(session, tableStorageFormat);
             }
         }
         else {
@@ -448,7 +447,7 @@ public class HiveWriterFactory
                     HiveWriteUtils.checkPartitionIsWritable(partitionName.get(), partition.get());
 
                     outputStorageFormat = partition.get().getStorage().getStorageFormat();
-                    configureCompression(outputConf, selectCompressionCodec(session, outputStorageFormat));
+                    compressionCodec = selectCompressionCodec(session, outputStorageFormat);
                     schema = getHiveSchema(partition.get(), table);
 
                     writeInfo = locationService.getPartitionWriteInfo(locationHandle, partition, partitionName.get());
@@ -462,7 +461,7 @@ public class HiveWriterFactory
                     updateMode = UpdateMode.OVERWRITE;
 
                     outputStorageFormat = fromHiveStorageFormat(partitionStorageFormat);
-                    configureCompression(outputConf, selectCompressionCodec(session, partitionStorageFormat));
+                    compressionCodec = selectCompressionCodec(session, partitionStorageFormat);
                     schema = getHiveSchema(table);
 
                     writeInfo = locationService.getPartitionWriteInfo(locationHandle, Optional.empty(), partitionName.get());
@@ -474,8 +473,8 @@ public class HiveWriterFactory
             }
         }
 
-        // verify compression was properly set by each of code paths above
-        assertCompressionConfigured(outputConf);
+        JobConf outputConf = new JobConf(conf);
+        configureCompression(outputConf, compressionCodec);
 
         additionalTableParameters.forEach(schema::setProperty);
 
@@ -509,8 +508,8 @@ public class HiveWriterFactory
                     this::makeRowIdSortingWriter,
                     path.toString(),
                     orcFileWriterFactory,
+                    compressionCodec,
                     inputColumns,
-                    conf,
                     session,
                     typeManager,
                     hiveRowtype.get());
@@ -523,8 +522,8 @@ public class HiveWriterFactory
                                 .map(DataColumn::getName)
                                 .collect(toList()),
                         outputStorageFormat,
+                        compressionCodec,
                         schema,
-                        outputConf,
                         session,
                         bucketNumber,
                         transaction,

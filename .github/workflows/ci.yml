@@ -57,7 +57,7 @@ jobs:
       matrix:
         java-version:
           - 17
-          - 20
+          - 19
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v3
@@ -114,7 +114,7 @@ jobs:
       - uses: docker/setup-qemu-action@v2
         with:
           platforms: arm64,ppc64le
-      - name: Test Docker Image
+      - name: Build and Test Docker Image
         run: core/docker/build.sh
       - name: Remove Trino from local Maven repo to avoid caching it
         # Avoid caching artifacts built in this job, cache should only include dependencies
@@ -542,7 +542,7 @@ jobs:
           include:
             - { modules: [ client/trino-jdbc, plugin/trino-base-jdbc, plugin/trino-thrift, plugin/trino-memory ] }
             - { modules: core/trino-main }
-            - { modules: core/trino-main, jdk: 20 }
+            - { modules: core/trino-main, jdk: 19 }
             - { modules: plugin/trino-accumulo }
             - { modules: plugin/trino-bigquery }
             - { modules: plugin/trino-bigquery, profile: cloud-tests-arrow }

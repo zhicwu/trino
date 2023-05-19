@@ -254,7 +254,8 @@ Hive connector documentation.
       - How long a cached directory listing is considered valid.
       - ``1m``
     * - ``hive.per-transaction-file-status-cache.max-retained-size``
-      - Maximum retained size of cached file status entries per transaction
+      - Maximum retained size of all entries in per transaction file status cache.
+        Retained size limit is shared across all running queries.
       - ``100MB``
     * - ``hive.rcfile.time-zone``
       - Adjusts binary encoded timestamp values to a specific time zone. For
@@ -396,7 +397,7 @@ Specific properties can be used to further configure the
 Thrift metastore configuration properties
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-In order to use a Hive Thrisft metastore, you must configure the metastore with
+In order to use a Hive Thrift metastore, you must configure the metastore with
 ``hive.metastore=thrift`` and provide further details with the following
 properties:
 
@@ -1628,10 +1629,10 @@ with Parquet files performed by the Hive connector.
       - ``true``
     * - ``parquet.optimized-writer.enabled``
       - Whether the optimized writer is used when writing Parquet files.
-        Set this property to ``true`` to use the optimized parquet writer by
+        Set this property to ``false`` to disable the optimized parquet writer by
         default. The equivalent catalog session property is
         ``parquet_optimized_writer_enabled``.
-      - ``false``
+      - ``true``
     * - ``parquet.optimized-writer.validation-percentage``
       - Percentage of parquet files to validate after write by re-reading the whole file
         when ``parquet.optimized-writer.enabled`` is set to ``true``.

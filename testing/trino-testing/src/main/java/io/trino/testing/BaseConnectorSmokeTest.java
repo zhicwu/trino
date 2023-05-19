@@ -39,6 +39,7 @@ import static io.trino.testing.TestingConnectorBehavior.SUPPORTS_RENAME_SCHEMA;
 import static io.trino.testing.TestingConnectorBehavior.SUPPORTS_RENAME_TABLE;
 import static io.trino.testing.TestingConnectorBehavior.SUPPORTS_RENAME_TABLE_ACROSS_SCHEMAS;
 import static io.trino.testing.TestingConnectorBehavior.SUPPORTS_ROW_LEVEL_DELETE;
+import static io.trino.testing.TestingConnectorBehavior.SUPPORTS_TRUNCATE;
 import static io.trino.testing.TestingConnectorBehavior.SUPPORTS_UPDATE;
 import static io.trino.testing.TestingNames.randomNameSuffix;
 import static io.trino.tpch.TpchTable.NATION;
@@ -244,6 +245,23 @@ public abstract class BaseConnectorSmokeTest
             assertThat(query("SELECT cast(regionkey AS integer) FROM " + table.getName()))
                     .skippingTypesCheck()
                     .matches("VALUES 0, 1, 3, 4");
+        }
+    }
+
+    @Test
+    public void testTruncateTable()
+    {
+        if (!hasBehavior(SUPPORTS_TRUNCATE)) {
+            assertQueryFails("TRUNCATE TABLE nation", "This connector does not support truncating tables");
+            return;
+        }
+
+        skipTestUnless(hasBehavior(SUPPORTS_CREATE_TABLE));
+
+        try (TestTable table = new TestTable(getQueryRunner()::execute, "test_truncate", "AS SELECT * FROM region")) {
+            assertUpdate("TRUNCATE TABLE " + table.getName());
+            assertThat(query("TABLE " + table.getName()))
+                    .returnsEmptyResult();
         }
     }
 
@@ -555,6 +573,20 @@ public abstract class BaseConnectorSmokeTest
                         "SELECT \\*\n" +
                         "FROM\n" +
                         "  nation");
+
+        // information_schema.tables (no filtering on table_name so that ConnectorMetadata.listViews is exercised)
+        assertThat(query("SELECT table_name, table_type FROM information_schema.tables WHERE table_schema = '" + schemaName + "'"))
+                .containsAll("VALUES (VARCHAR '" + viewName + "', VARCHAR 'BASE TABLE')");
+
+        // information_schema.views
+        assertThat(computeActual("SELECT table_name FROM information_schema.views WHERE table_schema = '" + schemaName + "'").getOnlyColumnAsSet())
+                .doesNotContain(viewName);
+        assertThat(query("SELECT table_name FROM information_schema.views WHERE table_schema = '" + schemaName + "' AND table_name = '" + viewName + "'"))
+                .returnsEmptyResult();
+
+        // materialized view-specific listings
+        assertThat(query("SELECT name FROM system.metadata.materialized_views WHERE catalog_name = '" + catalogName + "' AND schema_name = '" + schemaName + "'"))
+                .containsAll("VALUES VARCHAR '" + viewName + "'");
 
         assertUpdate("DROP MATERIALIZED VIEW " + viewName);
     }

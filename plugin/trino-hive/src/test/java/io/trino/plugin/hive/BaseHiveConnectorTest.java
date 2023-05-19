@@ -183,7 +183,6 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.data.Offset.offset;
 import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertFalse;
-import static org.testng.Assert.assertNotEquals;
 import static org.testng.Assert.assertNotNull;
 import static org.testng.Assert.assertNull;
 import static org.testng.Assert.assertTrue;
@@ -2076,6 +2075,10 @@ public abstract class BaseHiveConnectorTest
             }
             for (HiveCompressionCodec compressionCodec : HiveCompressionCodec.values()) {
                 if ((storageFormat == HiveStorageFormat.AVRO) && (compressionCodec == HiveCompressionCodec.LZ4)) {
+                    continue;
+                }
+                if ((storageFormat == HiveStorageFormat.PARQUET) && (compressionCodec == HiveCompressionCodec.LZ4)) {
+                    // TODO (https://github.com/trinodb/trino/issues/9142) Support LZ4 compression with native Parquet writer
                     continue;
                 }
                 testEmptyBucketedTable(storageFormat, compressionCodec, true);
@@ -5160,10 +5163,10 @@ public abstract class BaseHiveConnectorTest
     }
 
     @Test(dataProvider = "timestampPrecisionAndValues")
-    public void testParquetTimestampPredicatePushdownOptimizedWriter(HiveTimestampPrecision timestampPrecision, LocalDateTime value)
+    public void testParquetTimestampPredicatePushdownHiveWriter(HiveTimestampPrecision timestampPrecision, LocalDateTime value)
     {
         Session session = Session.builder(getSession())
-                .setCatalogSessionProperty("hive", "parquet_optimized_writer_enabled", "true")
+                .setCatalogSessionProperty("hive", "parquet_optimized_writer_enabled", "false")
                 .build();
         doTestParquetTimestampPredicatePushdown(session, timestampPrecision, value);
     }
@@ -5272,11 +5275,11 @@ public abstract class BaseHiveConnectorTest
     }
 
     @Test
-    public void testParquetDictionaryPredicatePushdownWithOptimizedWriter()
+    public void testParquetDictionaryPredicatePushdownWithHiveWriter()
     {
         testParquetDictionaryPredicatePushdown(
                 Session.builder(getSession())
-                        .setCatalogSessionProperty("hive", "parquet_optimized_writer_enabled", "true")
+                        .setCatalogSessionProperty("hive", "parquet_optimized_writer_enabled", "false")
                         .build());
     }
 
@@ -7672,31 +7675,6 @@ public abstract class BaseHiveConnectorTest
         assertUpdate("DROP TABLE test_prune_failure");
     }
 
-    @Test
-    public void testTemporaryStagingDirectorySessionProperties()
-    {
-        String tableName = "test_temporary_staging_directory_session_properties";
-        assertUpdate(format("CREATE TABLE %s(i int)", tableName));
-
-        Session session = Session.builder(getSession())
-                .setCatalogSessionProperty("hive", "temporary_staging_directory_enabled", "false")
-                .build();
-
-        HiveInsertTableHandle hiveInsertTableHandle = getHiveInsertTableHandle(session, tableName);
-        assertEquals(hiveInsertTableHandle.getLocationHandle().getWritePath(), hiveInsertTableHandle.getLocationHandle().getTargetPath());
-
-        session = Session.builder(getSession())
-                .setCatalogSessionProperty("hive", "temporary_staging_directory_enabled", "true")
-                .setCatalogSessionProperty("hive", "temporary_staging_directory_path", "/tmp/custom/temporary-${USER}")
-                .build();
-
-        hiveInsertTableHandle = getHiveInsertTableHandle(session, tableName);
-        assertNotEquals(hiveInsertTableHandle.getLocationHandle().getWritePath(), hiveInsertTableHandle.getLocationHandle().getTargetPath());
-        assertTrue(hiveInsertTableHandle.getLocationHandle().getWritePath().toString().startsWith("file:/tmp/custom/temporary-"));
-
-        assertUpdate("DROP TABLE " + tableName);
-    }
-
     private HiveInsertTableHandle getHiveInsertTableHandle(Session session, String tableName)
     {
         Metadata metadata = getDistributedQueryRunner().getCoordinator().getMetadata();
@@ -7711,33 +7689,6 @@ public abstract class BaseHiveConnectorTest
                     metadata.finishInsert(transactionSession, insertTableHandle, ImmutableList.of(), ImmutableList.of());
                     return hiveInsertTableHandle;
                 });
-    }
-
-    @Test
-    public void testSortedWritingTempStaging()
-    {
-        String tableName = "test_sorted_writing";
-        @Language("SQL") String createTableSql = format("" +
-                        "CREATE TABLE %s " +
-                        "WITH (" +
-                        "   bucket_count = 7," +
-                        "   bucketed_by = ARRAY['shipmode']," +
-                        "   sorted_by = ARRAY['shipmode']" +
-                        ") AS " +
-                        "SELECT * FROM tpch.tiny.lineitem",
-                tableName);
-
-        Session session = Session.builder(getSession())
-                .setCatalogSessionProperty("hive", "sorted_writing_enabled", "true")
-                .setCatalogSessionProperty("hive", "temporary_staging_directory_enabled", "true")
-                .setCatalogSessionProperty("hive", "temporary_staging_directory_path", "/tmp/custom/temporary-${USER}")
-                .build();
-
-        assertUpdate(session, createTableSql, 60175L);
-        MaterializedResult expected = computeActual("SELECT * FROM tpch.tiny.lineitem");
-        MaterializedResult actual = computeActual("SELECT * FROM " + tableName);
-        assertEqualsIgnoreOrder(actual.getMaterializedRows(), expected.getMaterializedRows());
-        assertUpdate("DROP TABLE " + tableName);
     }
 
     @Test
